@@ -516,6 +516,14 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: true
+      - name: Dependencies
+        # bigger-runner is a bare self-hosted runner — install the tools
+        # we need for docker-build + protogen-go + go test (make, curl,
+        # unzip for the protoc download, build-essential for cgo).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              make build-essential curl unzip ca-certificates git tar
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
