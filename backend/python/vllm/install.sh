@@ -32,20 +32,37 @@ if [ "x${BUILD_PROFILE}" == "xcpu" ]; then
     EXTRA_PIP_INSTALL_FLAGS+=" --index-strategy=unsafe-best-match"
 fi
 
-# We don't embed this into the images as it is a large dependency and not always needed.
-# Besides, the speed inference are not actually usable in the current state for production use-cases.
+# When FROM_SOURCE=true on a CPU build, skip the prebuilt wheel in
+# requirements-cpu-after.txt and compile vllm locally against the host's
+# actual CPU. The prebuilt CPU wheels from vllm releases are compiled with
+# wider SIMD (AVX-512 VNNI/BF16 etc.) than some environments support — in
+# particular GitHub Actions runners SIGILL on the vllm model registry
+# subprocess. FROM_SOURCE=true avoids that at the cost of a longer install.
 if [ "x${BUILD_TYPE}" == "x" ] && [ "x${FROM_SOURCE:-}" == "xtrue" ]; then
-        ensureVenv
-        # https://docs.vllm.ai/en/v0.6.1/getting_started/cpu-installation.html
-        if [ ! -d vllm ]; then
-            git clone https://github.com/vllm-project/vllm
-        fi
-        pushd vllm
-            uv pip install wheel packaging ninja "setuptools>=49.4.0" numpy typing-extensions pillow setuptools-scm grpcio==1.68.1 protobuf bitsandbytes
-            uv pip install -v -r requirements-cpu.txt --extra-index-url https://download.pytorch.org/whl/cpu
-            VLLM_TARGET_DEVICE=cpu python setup.py install
-        popd
-        rm -rf vllm
-    else
-        installRequirements
+    # Temporarily hide the prebuilt wheel so installRequirements doesn't
+    # pull it — the rest of the requirements files (base deps, torch,
+    # transformers) are still installed normally.
+    _cpu_after="${backend_dir}/requirements-cpu-after.txt"
+    _cpu_after_bak=""
+    if [ -f "${_cpu_after}" ]; then
+        _cpu_after_bak="${_cpu_after}.from-source.bak"
+        mv "${_cpu_after}" "${_cpu_after_bak}"
+    fi
+    installRequirements
+    if [ -n "${_cpu_after_bak}" ]; then
+        mv "${_cpu_after_bak}" "${_cpu_after}"
+    fi
+
+    # Build vllm from source against the installed torch.
+    # https://docs.vllm.ai/en/latest/getting_started/installation/cpu/
+    _vllm_src=$(mktemp -d)
+    trap 'rm -rf "${_vllm_src}"' EXIT
+    git clone --depth 1 https://github.com/vllm-project/vllm "${_vllm_src}/vllm"
+    pushd "${_vllm_src}/vllm"
+        uv pip install ${EXTRA_PIP_INSTALL_FLAGS:-} wheel packaging ninja "setuptools>=49.4.0" numpy typing-extensions pillow setuptools-scm
+        # Respect pre-installed torch version — skip vllm's own requirements-build.txt torch pin.
+        VLLM_TARGET_DEVICE=cpu uv pip install ${EXTRA_PIP_INSTALL_FLAGS:-} --no-deps .
+    popd
+else
+    installRequirements
 fi

@@ -509,7 +509,11 @@ test-extra-backend-ik-llama-cpp: docker-build-ik-llama-cpp
 
 ## vllm is resolved from a HuggingFace model id (no file download) and
 ## exercises Predict + streaming + tool-call extraction via the hermes parser.
-test-extra-backend-vllm: docker-build-vllm
+## FROM_SOURCE=true passes through to Dockerfile.python → install.sh and
+## compiles vllm locally instead of using the prebuilt CPU wheel — required
+## on runners whose CPU doesn't support the wheel's baked-in SIMD.
+test-extra-backend-vllm:
+	$(MAKE) docker-build-vllm
 	BACKEND_IMAGE=local-ai-backend:vllm \
 	BACKEND_TEST_MODEL_NAME=Qwen/Qwen2.5-0.5B-Instruct \
 	BACKEND_TEST_CAPS=health,load,predict,stream,tools \
@@ -669,6 +673,7 @@ define docker-build-backend
 		--build-arg CUDA_MINOR_VERSION=$(CUDA_MINOR_VERSION) \
 		--build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) \
 		--build-arg UBUNTU_CODENAME=$(UBUNTU_CODENAME) \
+		$(if $(FROM_SOURCE),--build-arg FROM_SOURCE=$(FROM_SOURCE)) \
 		$(if $(filter true,$(5)),--build-arg BACKEND=$(1)) \
 		-t local-ai-backend:$(1) -f backend/Dockerfile.$(2) $(3)
 endef

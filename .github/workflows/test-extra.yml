@@ -521,6 +521,12 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
           df -h
       - name: Build vllm (cpu) backend image and run gRPC e2e tests
+        env:
+          # GitHub Actions runners don't all support the SIMD instructions
+          # the prebuilt vllm CPU wheel was compiled against (SIGILL in
+          # vllm.model_executor.models.registry on import). Build vllm from
+          # source so it targets the actual CI CPU.
+          FROM_SOURCE: "true"
         run: |
           make test-extra-backend-vllm
   tests-acestep-cpp:
