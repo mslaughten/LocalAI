@@ -80,6 +80,35 @@ export default function Manage() {
     nodesApi.list().then(() => setDistributedMode(true)).catch(() => {})
   }, [fetchLoadedModels, fetchBackends])
 
+  // Auto-refresh the Models tab every 10s in distributed mode so ghost models
+  // (loaded on a worker but absent from this frontend's in-memory cache)
+  // clear on their own without the user clicking Update.
+  const [lastSyncedAt, setLastSyncedAt] = useState(() => Date.now())
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!distributedMode || activeTab !== 'models') return
+    const interval = setInterval(() => {
+      refetchModels()
+      fetchLoadedModels()
+      setLastSyncedAt(Date.now())
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [distributedMode, activeTab, refetchModels, fetchLoadedModels])
+
+  // Drive the "last synced Ns ago" label without over-rendering the table.
+  useEffect(() => {
+    if (!distributedMode) return
+    const interval = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [distributedMode])
+  const lastSyncedAgo = (() => {
+    const s = Math.max(0, Math.floor((nowTick - lastSyncedAt) / 1000))
+    if (s < 5) return 'just now'
+    if (s < 60) return `${s}s ago`
+    const m = Math.floor(s / 60)
+    return `${m}m ago`
+  })()
+
   // Fetch available backend upgrades
   useEffect(() => {
     if (activeTab === 'backends') {
@@ -291,7 +320,12 @@ export default function Manage() {
       {/* Models Tab */}
       {activeTab === 'models' && (
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 'var(--spacing-md)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-md)' }}>
+          {distributedMode && (
+            <span className="cell-muted" title="Auto-refreshes every 10s in distributed mode so ghost models clear promptly">
+              <i className="fas fa-rotate" /> Last synced {lastSyncedAgo}
+            </span>
+          )}
           <button className="btn btn-secondary btn-sm" onClick={handleReload} disabled={reloading}>
             <i className={`fas ${reloading ? 'fa-spinner fa-spin' : 'fa-rotate'}`} />
             {reloading ? 'Updating...' : 'Update'}
@@ -376,21 +410,47 @@ export default function Manage() {
                         </div>
                       </div>
                     </td>
-                    {/* Status */}
+                    {/* Status / Distribution */}
                     <td>
-                      {model.disabled ? (
-                        <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)' }}>
-                          <i className="fas fa-ban" style={{ fontSize: '6px' }} /> Disabled
-                        </span>
-                      ) : loadedModelIds.has(model.id) ? (
-                        <span className="badge badge-success">
-                          <i className="fas fa-circle" style={{ fontSize: '6px' }} /> Running
-                        </span>
-                      ) : (
-                        <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)' }}>
-                          <i className="fas fa-circle" style={{ fontSize: '6px' }} /> Idle
-                        </span>
-                      )}
+                      <div className="cell-stack">
+                        {model.disabled ? (
+                          <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)' }}>
+                            <i className="fas fa-ban" /> Disabled
+                          </span>
+                        ) : model.loaded_on && model.loaded_on.length > 0 ? (
+                          // Distributed: surface where the model is actually loaded
+                          // so operators don't have to expand each node manually.
+                          <div className="badge-row">
+                            {model.loaded_on.slice(0, 3).map(l => (
+                              <span
+                                key={l.node_id}
+                                className={`badge ${l.state === 'loaded' ? 'badge-success' : l.state === 'loading' ? 'badge-info' : 'badge-warning'}`}
+                                title={`${l.node_name} — ${l.state} (${l.node_status})`}
+                              >
+                                <i className="fas fa-server" /> {l.node_name}
+                              </span>
+                            ))}
+                            {model.loaded_on.length > 3 && (
+                              <span className="badge" title={model.loaded_on.map(l => `${l.node_name} (${l.state})`).join('\n')}>
+                                +{model.loaded_on.length - 3}
+                              </span>
+                            )}
+                          </div>
+                        ) : loadedModelIds.has(model.id) ? (
+                          <span className="badge badge-success">
+                            <i className="fas fa-circle" style={{ fontSize: '6px' }} /> Running
+                          </span>
+                        ) : (
+                          <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)' }}>
+                            <i className="fas fa-circle" style={{ fontSize: '6px' }} /> Idle
+                          </span>
+                        )}
+                        {model.source === 'registry-only' && (
+                          <span className="badge badge-warning" title="Discovered on a worker but not configured locally. Persist the config to make it permanent.">
+                            <i className="fas fa-ghost" /> Adopted
+                          </span>
+                        )}
+                      </div>
                     </td>
                     {/* Backend */}
                     <td>
