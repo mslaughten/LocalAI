@@ -1,0 +1,38 @@
+From: LocalAI maintainers <noreply@localai.io>
+Subject: [PATCH] gemma3: default rms norm eps when GGUF metadata key is missing
+
+Some Gemma 3 GGUF files (notably those distributed via the Ollama
+registry) do not embed the `gemma3.attention.layer_norm_rms_epsilon`
+metadata key. llama.cpp currently requires the key to be present and
+fails the entire model load with:
+
+    error loading model hyperparameters:
+    key not found in model: gemma3.attention.layer_norm_rms_epsilon
+
+Ollama's own loader silently falls back to ~1e-6 in the same situation,
+which is the canonical Gemma 3 default (see google/gemma_pytorch
+config.py and the Hugging Face Gemma3Config), so the model still loads
+and works correctly.
+
+Mirror that behavior here: pre-seed the field with the Gemma 3 default
+and mark the metadata key as optional. This unblocks Ollama-converted
+Gemma 3 models without affecting GGUFs that already carry the key.
+
+Refs: ggml-org/llama.cpp#12367, ollama/ollama#10262, mudler/LocalAI#9414
+---
+ src/llama-model.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1568,7 +1568,8 @@
+
+                 hparams.f_final_logit_softcapping = 0.0f;
+                 ml.get_key(LLM_KV_FINAL_LOGIT_SOFTCAPPING, hparams.f_final_logit_softcapping, false);
+-                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
++                hparams.f_norm_rms_eps = 1e-6f; // Gemma 3 canonical default; some Ollama GGUFs omit the key
++                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps, false);
+
+                 switch (hparams.n_layer) {
+                     case 18: type = LLM_TYPE_270M; break;
